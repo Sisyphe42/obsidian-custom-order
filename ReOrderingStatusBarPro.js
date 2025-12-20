@@ -14,11 +14,27 @@ if (!restoreMenu) {
   document.body.appendChild(restoreMenu);
 }
 
-(function () {
+// historyStack 与 pushHistory 在 IIFE 内部定义以确保 STORAGE_KEY 可见
+
+
+  (function () {
   const statusBar = document.querySelector('.status-bar');
   if (!statusBar) return;
 
   const STORAGE_KEY = 'obsidian-status-bar-layout';
+
+  // 撤销历史栈（FIFO，限制长度）
+  const historyStack = [];
+  const HISTORY_LIMIT = 20;
+
+  function pushHistory() {
+    try {
+      historyStack.push(localStorage.getItem(STORAGE_KEY));
+      if (historyStack.length > HISTORY_LIMIT) historyStack.shift();
+    } catch (err) {
+      console.warn('pushHistory error', err);
+    }
+  }
 
   // 状态
   let dragEnabled = false;
@@ -75,6 +91,87 @@ if (!restoreMenu) {
     return getComputedStyle(statusBar).getPropertyValue(prop);
   }
 
+  function updateSortingVisuals() {
+    // 仅在元素 hover 时显示 outline；同时在排序模式下添加覆盖类以抑制原生 :hover 副作用
+    [...statusBar.children].forEach(el => {
+      if (el === sortBtn) return;
+
+      // 清理旧事件
+      el.onmouseenter = null;
+      el.onmouseleave = null;
+
+      if (dragEnabled) {
+        el.onmouseenter = () => {
+          el.style.outline = `2px solid ${getStatusBarColor('border-color') || 'currentColor'}`;
+          el.style.outlineOffset = '-2px';
+        };
+        el.onmouseleave = () => {
+          el.style.outline = '';
+          el.style.outlineOffset = '';
+        };
+        el.classList.add('status-sorting-disable-hover');
+      } else {
+        el.classList.remove('status-sorting-disable-hover');
+        el.style.outline = '';
+        el.style.outlineOffset = '';
+      }
+    });
+  }
+
+  // 注入覆盖原生 hover 的样式（只插入一次）
+  if (!document.getElementById('status-sorting-override-style')) {
+    const s = document.createElement('style');
+    s.id = 'status-sorting-override-style';
+    s.textContent = `
+      .status-sorting-disable-hover,
+      .status-sorting-disable-hover * {
+        background: inherit !important;
+        color: inherit !important;
+        box-shadow: none !important;
+        transform: none !important;
+      }
+    `;
+    document.head.appendChild(s);
+  }
+
+  // ========== 默认顺序与历史快照（用于恢复默认与撤销） ==========
+  // 默认顺序（脚本加载时的 snapshot）
+  const defaultOrder = (() => {
+    return [...statusBar.children]
+      .filter(el => el.dataset.alwaysVisible !== 'true')
+      .map(el => ({ class: el.className, hidden: el.style.display === 'none' }));
+  })();
+
+  // 历史堆栈（用于撤销）：保存 snapshot 的 JSON 字符串
+  const historyOrder = [];
+  function pushHistoryOrder() {
+    try {
+      const snap = JSON.stringify(getCurrentOrderSnapshot());
+      historyOrder.push(snap);
+      if (historyOrder.length > HISTORY_LIMIT) historyOrder.shift();
+    } catch (err) {
+      console.warn('pushHistoryOrder error', err);
+    }
+  }
+
+  function getCurrentOrderSnapshot() {
+    return [...statusBar.children]
+      .filter(el => el.dataset.alwaysVisible !== 'true')
+      .map(el => ({ class: el.className, hidden: el.style.display === 'none' }));
+  }
+
+  function applySnapshot(snapshot) {
+    if (!Array.isArray(snapshot)) return;
+    snapshot.forEach(item => {
+      const el = [...statusBar.children].find(e => e.className === item.class);
+      if (!el) return;
+      statusBar.appendChild(el);
+      el.style.display = item.hidden ? 'none' : '';
+    });
+    saveLayout();
+    updateSortingVisuals();
+  }
+
   /* ===============================
      恢复菜单（Restore Menu）
   =============================== */
@@ -111,6 +208,66 @@ if (!restoreMenu) {
   //
   function openRestoreMenu() {
     restoreMenu.innerHTML = '';
+    const actionBar = createDiv('', `
+    display: flex;
+    gap: 8px;
+    padding: 4px 6px;
+    font-size: 12px;
+    border-bottom: 1px solid ${getStatusBarColor('border-color') || 'currentColor'};
+`);
+
+    function actionBtn(text, handler) {
+      const b = createDiv(text, `
+    cursor: pointer;
+    user-select: none;
+  `);
+      b.onclick = handler;
+      return b;
+    }
+
+    actionBar.appendChild(
+      actionBtn('全选', () => {
+        pushHistoryOrder();
+        rows.forEach(({ el }) => (el.style.display = ''));
+        saveLayout();
+        openRestoreMenu();
+      })
+    );
+
+    actionBar.appendChild(
+      actionBtn('全不选', () => {
+        pushHistoryOrder();
+        rows.forEach(({ el }) => (el.style.display = 'none'));
+        saveLayout();
+        openRestoreMenu();
+      })
+    );
+
+    actionBar.appendChild(
+      actionBtn('恢复默认', () => {
+        pushHistoryOrder();
+        applySnapshot(defaultOrder);
+        openRestoreMenu();
+      })
+    );
+
+    actionBar.appendChild(
+      actionBtn('撤销', () => {
+        const last = historyOrder.pop();
+        if (!last) return;
+        try {
+          const snap = JSON.parse(last);
+          applySnapshot(snap);
+        } catch (err) {
+          console.warn('undo parse error', err);
+        }
+        openRestoreMenu();
+      })
+    );
+
+
+    restoreMenu.appendChild(actionBar);
+
     restoreMenu.style.display = 'block';
     restoreMenu.style.flexDirection = 'column';
 
@@ -147,6 +304,7 @@ if (!restoreMenu) {
       checkbox.type = 'checkbox';
       checkbox.checked = el.style.display !== 'none';
       checkbox.onchange = () => {
+        pushHistoryOrder();
         el.style.display = checkbox.checked ? '' : 'none';
         saveLayout();
       };
@@ -175,6 +333,8 @@ if (!restoreMenu) {
       });
 
       row.addEventListener('drop', () => {
+        // 在修改前保存快照以支持撤销
+        pushHistoryOrder();
         // 拖拽完成后同步 status-bar 顺序
         const newOrder = [...restoreMenu.children].map(r => {
           return rows.find(item => item.name === r.querySelector('div').textContent)?.el;
@@ -193,8 +353,16 @@ if (!restoreMenu) {
     restoreMenu.style.padding = '4px';
 
     const rect = sortBtn.getBoundingClientRect();
-    restoreMenu.style.left = rect.left + 'px';
-    restoreMenu.style.top = rect.top - restoreMenu.offsetHeight - 8 + 'px';
+    // 初始左坐标：与 sortBtn 左对齐
+    let left = rect.left;
+    // 读取菜单尺寸并检测是否会超出视窗右侧
+    const menuRect = restoreMenu.getBoundingClientRect();
+    if (left + menuRect.width > window.innerWidth) {
+      // 如果会超出，则让菜单的右边缘与 statusBar 的右边缘对齐
+      left = Math.max(4, rect.right - menuRect.width);
+    }
+    restoreMenu.style.left = left + 'px';
+    restoreMenu.style.top = rect.top - menuRect.height - 8 + 'px';
   }
 
 
@@ -265,11 +433,17 @@ if (!restoreMenu) {
     sortBtn.addEventListener('click', () => {
       dragEnabled = !dragEnabled;
       sortBtn.textContent = dragEnabled ? '✔' : '🧲';
+
+      statusBar.classList.toggle('is-sorting', dragEnabled);
+
       [...statusBar.children].forEach(el => {
         if (el === sortBtn) return;
         el.draggable = dragEnabled;
         el.style.cursor = dragEnabled ? 'move' : '';
+
       });
+      updateSortingVisuals();
+
     });
     sortBtn.addEventListener('contextmenu', e => {
       e.preventDefault();
@@ -283,11 +457,15 @@ if (!restoreMenu) {
     statusBar.addEventListener('dragstart', e => {
       if (!dragEnabled) return;
       draggedEl = e.target;
-      e.target.style.opacity = '0.5';
+      // 仅使用 transform 提供拖拽视觉反馈，避免修改 opacity
+      e.target.style.transform = 'translateY(-2px)';
     });
 
     statusBar.addEventListener('dragend', e => {
-      e.target.style.opacity = '';
+      if (!dragEnabled) return;
+      pushHistoryOrder();
+      // 恢复 transform
+      e.target.style.transform = '';
       draggedEl = null;
       saveLayout();
     });
@@ -301,6 +479,19 @@ if (!restoreMenu) {
       const after = e.clientX > rect.left + rect.width / 2;
       statusBar.insertBefore(draggedEl, after ? target.nextSibling : target);
     });
+
+    statusBar.addEventListener(
+      'mouseover',
+      e => {
+        if (!dragEnabled) return;
+        const el = e.target.closest('.status-bar > *');
+        if (el && el !== sortBtn) {
+          e.stopImmediatePropagation();
+        }
+      },
+      true // 捕获阶段
+    );
+
 
     /* ===============================
        Hover 控件：显示删除按钮 + tooltip
@@ -340,9 +531,16 @@ if (!restoreMenu) {
       if (el !== sortBtn) attachHover(el);
     });
 
+    [...statusBar.children].forEach(el => {
+      el.style.transition = 'transform 120ms ease';
+    });
+
+
     /* ===============================
        初始化：恢复之前保存的布局
     =============================== */
     restoreLayout();
+    updateSortingVisuals();
+
   }
 })();
