@@ -275,8 +275,19 @@ if (!restoreMenu) {
       .filter(el => el !== sortBtn && el.dataset.alwaysVisible !== 'true')
       .map(el => ({ el, name: getDisplayName(el) }));
 
-    rows.forEach(({ el, name }) => {
+    // 更新行号显示的函数
+    function updateRowNumbers() {
+      const rowsInMenu = Array.from(restoreMenu.querySelectorAll('.status-item-row'));
+      rowsInMenu.forEach((row, index) => {
+        const label = row.querySelector('.item-label');
+        const text = label.textContent.replace(/^\d+\.\s*/, ''); // 移除现有编号
+        label.textContent = `${index + 1}. ${text}`;
+      });
+    }
+
+    rows.forEach(({ el, name }, index) => {
       const row = document.createElement('div');
+      row.className = 'status-item-row'; // 添加类名以便查找
       row.style.cssText = `
       display: flex;
       align-items: center;
@@ -289,7 +300,8 @@ if (!restoreMenu) {
       row.draggable = true;
 
       const label = document.createElement('div');
-      label.textContent = name;
+      label.className = 'item-label'; // 添加类名以便更新
+      label.textContent = `${index + 1}. ${name}`; // 添加序号
       label.style.cssText = `
       font-size: 12px;
       white-space: nowrap;
@@ -313,7 +325,7 @@ if (!restoreMenu) {
       row.appendChild(checkbox);
       restoreMenu.appendChild(row);
 
-      // ====== 拖拽逻辑 ======
+      // ====== 拖拽逻辑 ====== 
       row.addEventListener('dragstart', e => {
         row.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
@@ -322,6 +334,8 @@ if (!restoreMenu) {
 
       row.addEventListener('dragend', () => {
         row.classList.remove('dragging');
+        // 拖拽结束后更新序号
+        setTimeout(updateRowNumbers, 0);
       });
 
       row.addEventListener('dragover', e => {
@@ -336,12 +350,15 @@ if (!restoreMenu) {
         // 在修改前保存快照以支持撤销
         pushHistoryOrder();
         // 拖拽完成后同步 status-bar 顺序
-        const newOrder = [...restoreMenu.children].map(r => {
-          return rows.find(item => item.name === r.querySelector('div').textContent)?.el;
+        const newOrder = [...restoreMenu.querySelectorAll('.status-item-row')].map(r => {
+          const text = r.querySelector('.item-label').textContent.replace(/^\d+\.\s*/, '');
+          return rows.find(item => item.name === text)?.el;
         }).filter(Boolean);
 
         newOrder.forEach(el => statusBar.appendChild(el));
         saveLayout();
+        // 更新序号显示
+        updateRowNumbers();
       });
     });
 
