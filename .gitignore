@@ -1,0 +1,4 @@
+.hotreload
+node_modules
+main.js
+data.json
