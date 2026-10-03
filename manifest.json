@@ -1,7 +1,7 @@
 {
   "id": "obsidian-custom-order",
   "name": "Custom Order",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "minAppVersion": "0.15.0",
   "description": "Customize the order and visibility of items.",
   "author": "sisyphe42",
