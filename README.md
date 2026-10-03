@@ -13,7 +13,7 @@ Customize the order and visibility of items.
 
 ## Installation
 
-1. Install plugin in `.obsidian/plugins/`
+1. Install plugin files in `.obsidian/plugins/custom-order/`
 2. Enable in Settings → Community Plugins
 
 ## Development
