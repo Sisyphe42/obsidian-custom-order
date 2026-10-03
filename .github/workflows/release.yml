@@ -25,15 +25,21 @@ jobs:
           npm install
           npm run build
 
-      - name: Create release
+      - name: Create or update release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
           previous_tag=$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || git rev-list --max-parents=0 HEAD)
 
-          gh release create "$tag" \
-            --title="$tag" \
-            --notes="Full Changelog: https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${tag}" \
-            --draft \
-            main.js manifest.json
+          notes="Full Changelog: https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${tag}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" main.js manifest.json --clobber
+            gh release edit "$tag" --title="$tag" --notes="$notes"
+          else
+            gh release create "$tag" \
+              --title="$tag" \
+              --notes="$notes" \
+              --draft \
+              main.js manifest.json
+          fi
